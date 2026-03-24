@@ -11,7 +11,17 @@ import {
 } from 'react-native';
 import { colors, spacing, radius, typography } from '../theme';
 
-const ALERT_THRESHOLD_SECONDS = 60;
+// Non-linear queue progress: slow start, fast near end
+function easeQueueProgress(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 0.98;
+  if (t < 0.7) {
+    // Sub-linear first 70% — queue moves slowly
+    return 0.65 * Math.pow(t / 0.7, 1.5);
+  }
+  // Super-linear last 30% — queue accelerates
+  return 0.65 + 0.33 * Math.pow((t - 0.7) / 0.3, 0.6);
+}
 
 const QUEUE_PHASES = [
   { from: 0,  message: 'מתחבר למערכת...', icon: '🔄' },
@@ -101,17 +111,20 @@ export default function WaitingScreen({ route, navigation }) {
   const [tipIndex, setTipIndex] = useState(0);
   const [displayedPhase, setDisplayedPhase] = useState(QUEUE_PHASES[0]);
   const [displayedEstimate, setDisplayedEstimate] = useState(initialEstimateMinRef.current);
+  const [queueProgress, setQueueProgress] = useState(0);
   const intervalRef = useRef(null);
   const tipIntervalRef = useRef(null);
   const alertFiredRef = useRef(false);
   const prevPhaseIndexRef = useRef(0);
   const prevEstimateRef = useRef(initialEstimateMinRef.current);
+  const queueJitterRef = useRef(0);
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const queueFadeAnim = useRef(new Animated.Value(1)).current;
   const queueSlideAnim = useRef(new Animated.Value(0)).current;
   const estimateFadeAnim = useRef(new Animated.Value(1)).current;
+  const progressBarAnim = useRef(new Animated.Value(0)).current;
   const flashAnim = useRef(new Animated.Value(0)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const alertScaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -165,6 +178,34 @@ export default function WaitingScreen({ route, navigation }) {
         Animated.timing(estimateFadeAnim, { toValue: 1,   duration: 350, useNativeDriver: true }),
       ]).start();
       setDisplayedEstimate(next);
+    }
+  }, [elapsed]);
+
+  // Queue progress: non-linear advance with jitter, triggers ALMOST at 85%
+  useEffect(() => {
+    const isActive = status === STATUS.WAITING || status === STATUS.ALMOST;
+    if (!isActive) return;
+
+    // Evolve jitter every 5 s: small random walk, slightly biased slow
+    if (elapsed % 5 === 0 && elapsed > 0) {
+      const delta = (Math.random() - 0.35) * 0.025;
+      queueJitterRef.current = Math.max(-0.07, Math.min(0.07, queueJitterRef.current + delta));
+    }
+
+    const t = elapsed / estimatedSeconds;
+    const raw = Math.max(0, Math.min(0.98, easeQueueProgress(t) + queueJitterRef.current));
+
+    setQueueProgress(raw);
+    Animated.timing(progressBarAnim, {
+      toValue: raw,
+      duration: 900,
+      useNativeDriver: false,
+    }).start();
+
+    // Trigger ALMOST once progress hits 85%
+    if (raw >= 0.85 && !alertFiredRef.current && status === STATUS.WAITING) {
+      alertFiredRef.current = true;
+      setTimeout(triggerAlert, 0);
     }
   }, [elapsed]);
 
@@ -234,13 +275,6 @@ export default function WaitingScreen({ route, navigation }) {
         setElapsed((prev) => {
           const next = prev + 1;
 
-          // Fire alert once at threshold
-          if (next === ALERT_THRESHOLD_SECONDS && !alertFiredRef.current) {
-            alertFiredRef.current = true;
-            // Use setTimeout to avoid setState-inside-setState
-            setTimeout(triggerAlert, 0);
-          }
-
           if (next >= estimatedSeconds) {
             setStatus(STATUS.DONE);
             clearInterval(intervalRef.current);
@@ -274,11 +308,14 @@ export default function WaitingScreen({ route, navigation }) {
 
     alertFiredRef.current = false;
     prevPhaseIndexRef.current = 0;
+    queueJitterRef.current = 0;
     alertOpacityAnim.setValue(0);
     alertScaleAnim.setValue(0.8);
     queueFadeAnim.setValue(1);
     queueSlideAnim.setValue(0);
     estimateFadeAnim.setValue(1);
+    progressBarAnim.setValue(0);
+    setQueueProgress(0);
     setDisplayedEstimate(newEstimate);
     setDisplayedPhase(QUEUE_PHASES[0]);
     setStatus(STATUS.WAITING);
@@ -405,6 +442,37 @@ export default function WaitingScreen({ route, navigation }) {
               </Text>
             </Text>
           </Animated.View>
+        )}
+
+        {/* Queue progress bar */}
+        {status !== STATUS.DONE && (
+          <View style={styles.progressSection}>
+            <View style={styles.progressLabelRow}>
+              <Text style={styles.progressLabel}>התקדמות בתור</Text>
+              <Text style={[styles.progressPct, {
+                color: status === STATUS.ALMOST ? colors.danger : company.color,
+              }]}>
+                {`${Math.round(queueProgress * 100)}%`}
+              </Text>
+            </View>
+            <View style={styles.progressTrack}>
+              {/* scaleX(-1) makes the fill grow right-to-left (RTL natural) */}
+              <View style={styles.progressTrackInner}>
+                <Animated.View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: progressBarAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0%', '100%'],
+                      }),
+                      backgroundColor: status === STATUS.ALMOST ? colors.danger : company.color,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
         )}
 
         <View style={styles.statsRow}>
@@ -656,6 +724,43 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: 0.5,
     textAlign: 'right',
+  },
+  progressSection: {
+    width: '100%',
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  progressLabelRow: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  progressLabel: {
+    ...typography.smallMedium,
+    color: colors.textSecondary,
+    textAlign: 'right',
+  },
+  progressPct: {
+    ...typography.smallMedium,
+    fontWeight: '700',
+  },
+  progressTrack: {
+    height: 10,
+    backgroundColor: colors.border,
+    borderRadius: radius.full,
+    overflow: 'hidden',
+    // Flip horizontally so fill grows from right (RTL)
+    transform: [{ scaleX: -1 }],
+  },
+  progressTrackInner: {
+    flex: 1,
+    borderRadius: radius.full,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: radius.full,
   },
   estimateCard: {
     flexDirection: 'row-reverse',
