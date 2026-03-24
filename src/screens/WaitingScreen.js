@@ -79,11 +79,22 @@ export default function WaitingScreen({ route, navigation }) {
   const { company, service } = route.params;
   const estimatedSeconds = service.estimatedWait * 60;
 
-  const [status, setStatus] = useState(STATUS.IDLE);
+  const [status, setStatus] = useState(STATUS.WAITING);
   const [elapsed, setElapsed] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
   const intervalRef = useRef(null);
   const tipIntervalRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Auto-start timer on mount
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
 
   useEffect(() => {
     if (status === STATUS.WAITING) {
@@ -112,7 +123,6 @@ export default function WaitingScreen({ route, navigation }) {
     };
   }, [status]);
 
-  const handleStart = () => setStatus(STATUS.WAITING);
   const handlePause = () => setStatus(STATUS.PAUSED);
   const handleResume = () => setStatus(STATUS.WAITING);
   const handleReset = () => {
@@ -174,10 +184,10 @@ export default function WaitingScreen({ route, navigation }) {
             ) : (
               <>
                 <Text style={styles.timerLabel}>נותר</Text>
-                <Text style={[styles.timerValue, { color: company.color }]}>
+                <Text style={[styles.timerValue, { color: status === STATUS.PAUSED ? colors.warning : company.color }]}>
                   {formatTime(remaining)}
                 </Text>
-                <Text style={styles.timerSub}>דקות</Text>
+                <Text style={styles.timerSub}>מתוך {service.estimatedWait} דק׳</Text>
               </>
             )}
           </View>
@@ -187,10 +197,22 @@ export default function WaitingScreen({ route, navigation }) {
           {getStatusLabel()}
         </Text>
 
+        {/* Live elapsed time */}
+        {status !== STATUS.DONE && (
+          <View style={styles.elapsedBanner}>
+            {status === STATUS.WAITING && (
+              <Animated.View style={[styles.pulseDot, { opacity: pulseAnim, backgroundColor: company.color }]} />
+            )}
+            <Text style={styles.elapsedLabel}>
+              {`זמן המתנה: ${formatTime(elapsed)}`}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>{formatTime(elapsed)}</Text>
-            <Text style={styles.statLabel}>עברו</Text>
+            <Text style={styles.statValue}>{formatTime(remaining)}</Text>
+            <Text style={styles.statLabel}>נותר</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
@@ -202,16 +224,6 @@ export default function WaitingScreen({ route, navigation }) {
 
       {/* Controls */}
       <View style={styles.controls}>
-        {status === STATUS.IDLE && (
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: company.color }]}
-            onPress={handleStart}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.primaryButtonText}>התחל המתנה</Text>
-          </TouchableOpacity>
-        )}
-
         {status === STATUS.WAITING && (
           <View style={styles.buttonRow}>
             <TouchableOpacity
@@ -362,6 +374,33 @@ const styles = StyleSheet.create({
   statusLabel: {
     ...typography.bodyMedium,
     marginBottom: spacing.lg,
+  },
+  elapsedBanner: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.lg,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  pulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: spacing.sm,
+  },
+  elapsedLabel: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+    letterSpacing: 0.5,
+    textAlign: 'right',
   },
   statsRow: {
     flexDirection: 'row-reverse',
