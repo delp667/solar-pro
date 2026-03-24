@@ -7,8 +7,11 @@ import {
   SafeAreaView,
   StatusBar,
   Animated,
+  Vibration,
 } from 'react-native';
 import { colors, spacing, radius, typography } from '../theme';
+
+const ALERT_THRESHOLD_SECONDS = 60;
 
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
@@ -18,8 +21,6 @@ function formatTime(seconds) {
 
 function ProgressRing({ progress, color, size = 160, strokeWidth = 10 }) {
   const animatedValue = useRef(new Animated.Value(0)).current;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
 
   useEffect(() => {
     Animated.timing(animatedValue, {
@@ -31,7 +32,6 @@ function ProgressRing({ progress, color, size = 160, strokeWidth = 10 }) {
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Background ring */}
       <View
         style={{
           position: 'absolute',
@@ -42,7 +42,6 @@ function ProgressRing({ progress, color, size = 160, strokeWidth = 10 }) {
           borderColor: color + '25',
         }}
       />
-      {/* Simple arc simulation using border */}
       <View
         style={{
           position: 'absolute',
@@ -61,8 +60,8 @@ function ProgressRing({ progress, color, size = 160, strokeWidth = 10 }) {
 }
 
 const STATUS = {
-  IDLE: 'idle',
   WAITING: 'waiting',
+  ALMOST: 'almost',
   PAUSED: 'paused',
   DONE: 'done',
 };
@@ -84,9 +83,17 @@ export default function WaitingScreen({ route, navigation }) {
   const [tipIndex, setTipIndex] = useState(0);
   const intervalRef = useRef(null);
   const tipIntervalRef = useRef(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const alertFiredRef = useRef(false);
 
-  // Auto-start timer on mount
+  // Animations
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const flashAnim = useRef(new Animated.Value(0)).current;
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const alertScaleAnim = useRef(new Animated.Value(0.8)).current;
+  const alertOpacityAnim = useRef(new Animated.Value(0)).current;
+  const alertPulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Pulse dot loop
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -96,16 +103,85 @@ export default function WaitingScreen({ route, navigation }) {
     ).start();
   }, []);
 
+  // Alert banner pulse loop (runs while ALMOST)
   useEffect(() => {
-    if (status === STATUS.WAITING) {
+    if (status === STATUS.ALMOST) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(alertPulseAnim, { toValue: 0.6, duration: 500, useNativeDriver: true }),
+          Animated.timing(alertPulseAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      alertPulseAnim.stopAnimation();
+      alertPulseAnim.setValue(1);
+    }
+  }, [status]);
+
+  const triggerAlert = () => {
+    // Vibrate: short-short-long pattern for urgency
+    Vibration.vibrate([0, 300, 120, 300, 120, 600]);
+
+    setStatus(STATUS.ALMOST);
+
+    // Flash red overlay: in → hold → out
+    Animated.sequence([
+      Animated.timing(flashAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+      Animated.delay(200),
+      Animated.timing(flashAnim, { toValue: 0.6, duration: 100, useNativeDriver: true }),
+      Animated.delay(100),
+      Animated.timing(flashAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+      Animated.delay(200),
+      Animated.timing(flashAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start();
+
+    // Alert card: slide + scale in
+    Animated.parallel([
+      Animated.spring(alertScaleAnim, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }),
+      Animated.timing(alertOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      // Shake after it appears
+      Animated.sequence([
+        Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 4, duration: 60, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+      ]).start();
+    });
+  };
+
+  const dismissAlert = () => {
+    Animated.parallel([
+      Animated.timing(alertOpacityAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(alertScaleAnim, { toValue: 0.8, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      setStatus(STATUS.WAITING);
+    });
+  };
+
+  // Timer tick
+  useEffect(() => {
+    const isActive = status === STATUS.WAITING || status === STATUS.ALMOST;
+    if (isActive) {
       intervalRef.current = setInterval(() => {
         setElapsed((prev) => {
-          if (prev + 1 >= estimatedSeconds) {
+          const next = prev + 1;
+
+          // Fire alert once at threshold
+          if (next === ALERT_THRESHOLD_SECONDS && !alertFiredRef.current) {
+            alertFiredRef.current = true;
+            // Use setTimeout to avoid setState-inside-setState
+            setTimeout(triggerAlert, 0);
+          }
+
+          if (next >= estimatedSeconds) {
             setStatus(STATUS.DONE);
             clearInterval(intervalRef.current);
             return estimatedSeconds;
           }
-          return prev + 1;
+          return next;
         });
       }, 1000);
 
@@ -126,7 +202,10 @@ export default function WaitingScreen({ route, navigation }) {
   const handlePause = () => setStatus(STATUS.PAUSED);
   const handleResume = () => setStatus(STATUS.WAITING);
   const handleReset = () => {
-    setStatus(STATUS.IDLE);
+    alertFiredRef.current = false;
+    alertOpacityAnim.setValue(0);
+    alertScaleAnim.setValue(0.8);
+    setStatus(STATUS.WAITING);
     setElapsed(0);
   };
 
@@ -135,8 +214,8 @@ export default function WaitingScreen({ route, navigation }) {
 
   const getStatusLabel = () => {
     switch (status) {
-      case STATUS.IDLE: return 'מוכן להתחיל';
       case STATUS.WAITING: return 'ממתין לנציג...';
+      case STATUS.ALMOST: return 'כמעט נציג';
       case STATUS.PAUSED: return 'הפסקה';
       case STATUS.DONE: return 'הגיע הזמן! 🎉';
       default: return '';
@@ -145,17 +224,29 @@ export default function WaitingScreen({ route, navigation }) {
 
   const getStatusColor = () => {
     switch (status) {
-      case STATUS.IDLE: return colors.textSecondary;
       case STATUS.WAITING: return company.color;
+      case STATUS.ALMOST: return colors.danger;
       case STATUS.PAUSED: return colors.warning;
       case STATUS.DONE: return colors.success;
       default: return colors.text;
     }
   };
 
+  const ringColor = status === STATUS.DONE
+    ? colors.success
+    : status === STATUS.ALMOST
+      ? colors.danger
+      : company.color;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+
+      {/* Full-screen flash overlay */}
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.flashOverlay, { opacity: flashAnim }]}
+      />
 
       {/* Header summary */}
       <View style={styles.header}>
@@ -172,19 +263,14 @@ export default function WaitingScreen({ route, navigation }) {
       {/* Timer section */}
       <View style={styles.timerSection}>
         <View style={styles.ringWrapper}>
-          <ProgressRing
-            progress={progress}
-            color={status === STATUS.DONE ? colors.success : company.color}
-            size={200}
-            strokeWidth={12}
-          />
+          <ProgressRing progress={progress} color={ringColor} size={200} strokeWidth={12} />
           <View style={styles.timerContent}>
             {status === STATUS.DONE ? (
               <Text style={styles.doneEmoji}>🎉</Text>
             ) : (
               <>
                 <Text style={styles.timerLabel}>נותר</Text>
-                <Text style={[styles.timerValue, { color: status === STATUS.PAUSED ? colors.warning : company.color }]}>
+                <Text style={[styles.timerValue, { color: status === STATUS.PAUSED ? colors.warning : ringColor }]}>
                   {formatTime(remaining)}
                 </Text>
                 <Text style={styles.timerSub}>מתוך {service.estimatedWait} דק׳</Text>
@@ -199,11 +285,20 @@ export default function WaitingScreen({ route, navigation }) {
 
         {/* Live elapsed time */}
         {status !== STATUS.DONE && (
-          <View style={styles.elapsedBanner}>
-            {status === STATUS.WAITING && (
-              <Animated.View style={[styles.pulseDot, { opacity: pulseAnim, backgroundColor: company.color }]} />
+          <View style={[
+            styles.elapsedBanner,
+            status === STATUS.ALMOST && styles.elapsedBannerAlert,
+          ]}>
+            {(status === STATUS.WAITING || status === STATUS.ALMOST) && (
+              <Animated.View style={[
+                styles.pulseDot,
+                { opacity: pulseAnim, backgroundColor: status === STATUS.ALMOST ? colors.danger : company.color },
+              ]} />
             )}
-            <Text style={styles.elapsedLabel}>
+            <Text style={[
+              styles.elapsedLabel,
+              status === STATUS.ALMOST && { color: colors.danger },
+            ]}>
               {`זמן המתנה: ${formatTime(elapsed)}`}
             </Text>
           </View>
@@ -222,9 +317,38 @@ export default function WaitingScreen({ route, navigation }) {
         </View>
       </View>
 
+      {/* Alert banner */}
+      {(status === STATUS.ALMOST) && (
+        <Animated.View
+          style={[
+            styles.alertCard,
+            {
+              opacity: alertOpacityAnim,
+              transform: [
+                { scale: alertScaleAnim },
+                { translateX: shakeAnim },
+              ],
+            },
+          ]}
+        >
+          <Animated.View style={[styles.alertIconWrapper, { opacity: alertPulseAnim }]}>
+            <Text style={styles.alertIcon}>📞</Text>
+          </Animated.View>
+          <Text style={styles.alertTitle}>נציג עומד לענות</Text>
+          <Text style={styles.alertMessage}>חזור לשיחה!</Text>
+          <TouchableOpacity
+            style={styles.alertButton}
+            onPress={dismissAlert}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.alertButtonText}>הבנתי, חוזר לשיחה</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
+
       {/* Controls */}
       <View style={styles.controls}>
-        {status === STATUS.WAITING && (
+        {(status === STATUS.WAITING || status === STATUS.ALMOST) && (
           <View style={styles.buttonRow}>
             <TouchableOpacity
               style={styles.secondaryButton}
@@ -303,6 +427,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  flashOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.danger,
+    zIndex: 10,
+  },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
@@ -374,6 +503,7 @@ const styles = StyleSheet.create({
   statusLabel: {
     ...typography.bodyMedium,
     marginBottom: spacing.lg,
+    fontWeight: '600',
   },
   elapsedBanner: {
     flexDirection: 'row-reverse',
@@ -388,6 +518,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  elapsedBannerAlert: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: colors.danger + '60',
   },
   pulseDot: {
     width: 8,
@@ -435,9 +570,54 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginHorizontal: spacing.lg,
   },
+  alertCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: colors.danger,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    alignItems: 'center',
+    shadowColor: colors.danger,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  alertIconWrapper: {
+    marginBottom: spacing.sm,
+  },
+  alertIcon: {
+    fontSize: 40,
+  },
+  alertTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  alertMessage: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  alertButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+  },
+  alertButtonText: {
+    ...typography.bodyMedium,
+    color: colors.danger,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   controls: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.sm,
   },
   primaryButton: {
     paddingVertical: spacing.md,
