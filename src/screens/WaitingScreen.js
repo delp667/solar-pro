@@ -10,6 +10,7 @@ import {
   Vibration,
 } from 'react-native';
 import { colors, spacing, radius, typography } from '../theme';
+import { getCompanyContent } from '../data/companyContent';
 
 // Non-linear queue progress: slow start, fast near end
 function easeQueueProgress(t) {
@@ -23,17 +24,10 @@ function easeQueueProgress(t) {
   return 0.65 + 0.33 * Math.pow((t - 0.7) / 0.3, 0.6);
 }
 
-const QUEUE_PHASES = [
-  { from: 0,  message: 'מתחבר למערכת...', icon: '🔄' },
-  { from: 5,  message: 'נכנסת לתור',       icon: '✅' },
-  { from: 15, message: 'יש עומס גבוה כרגע', icon: '⚠️' },
-  { from: 30, message: 'מתקדם בתור...',    icon: '📶' },
-];
-
-function getPhaseIndex(elapsed) {
+function getPhaseIndex(phases, elapsed) {
   let idx = 0;
-  for (let i = 0; i < QUEUE_PHASES.length; i++) {
-    if (elapsed >= QUEUE_PHASES[i].from) idx = i;
+  for (let i = 0; i < phases.length; i++) {
+    if (elapsed >= phases[i].from) idx = i;
   }
   return idx;
 }
@@ -91,16 +85,9 @@ const STATUS = {
   DONE: 'done',
 };
 
-const tips = [
-  'כדאי להכין את מספר תעודת הזהות לפני שיעלה נציג',
-  'רשום מראש את מספר החשבון שלך לתגובה מהירה',
-  'נסה להתקשר בשעות הבוקר המוקדמות לזמן המתנה קצר יותר',
-  'שמור על הקו פתוח ואל תנתק אפילו אם השמע נעצר',
-  'אפשר לבקש מהנציג לחזור אליך אם הקו ניתק',
-];
-
 export default function WaitingScreen({ route, navigation }) {
   const { company, service } = route.params;
+  const { phases, tips } = getCompanyContent(company.category);
 
   // Random wait between 10–25 min, stable for this session
   const initialEstimateMinRef = useRef(Math.floor(Math.random() * 16) + 10);
@@ -109,7 +96,7 @@ export default function WaitingScreen({ route, navigation }) {
   const [status, setStatus] = useState(STATUS.WAITING);
   const [elapsed, setElapsed] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
-  const [displayedPhase, setDisplayedPhase] = useState(QUEUE_PHASES[0]);
+  const [displayedPhase, setDisplayedPhase] = useState(phases[0]);
   const [displayedEstimate, setDisplayedEstimate] = useState(initialEstimateMinRef.current);
   const [queueProgress, setQueueProgress] = useState(0);
   const intervalRef = useRef(null);
@@ -143,7 +130,7 @@ export default function WaitingScreen({ route, navigation }) {
 
   // Queue phase transitions driven by elapsed
   useEffect(() => {
-    const idx = getPhaseIndex(elapsed);
+    const idx = getPhaseIndex(phases, elapsed);
     if (idx !== prevPhaseIndexRef.current) {
       prevPhaseIndexRef.current = idx;
       // Fade + slide out, swap text, fade + slide in
@@ -151,7 +138,7 @@ export default function WaitingScreen({ route, navigation }) {
         Animated.timing(queueFadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
         Animated.timing(queueSlideAnim, { toValue: -8, duration: 180, useNativeDriver: true }),
       ]).start(() => {
-        setDisplayedPhase(QUEUE_PHASES[idx]);
+        setDisplayedPhase(phases[idx]);
         queueSlideAnim.setValue(10);
         Animated.parallel([
           Animated.timing(queueFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
@@ -317,7 +304,7 @@ export default function WaitingScreen({ route, navigation }) {
     progressBarAnim.setValue(0);
     setQueueProgress(0);
     setDisplayedEstimate(newEstimate);
-    setDisplayedPhase(QUEUE_PHASES[0]);
+    setDisplayedPhase(phases[0]);
     setStatus(STATUS.WAITING);
     setElapsed(0);
   };
@@ -361,16 +348,18 @@ export default function WaitingScreen({ route, navigation }) {
         style={[styles.flashOverlay, { opacity: flashAnim }]}
       />
 
-      {/* Header summary */}
-      <View style={styles.header}>
-        <View style={styles.summaryRow}>
-          <View style={[styles.chip, { backgroundColor: company.color + '18' }]}>
-            <Text style={styles.chipIcon}>{company.icon}</Text>
-            <Text style={[styles.chipText, { color: company.color }]}>{company.name}</Text>
+      {/* Company identity header */}
+      <View style={[styles.companyHeader, { borderRightColor: company.color }]}>
+        <View style={styles.companyHeaderMain}>
+          <Text style={styles.companyHeaderIcon}>{company.icon}</Text>
+          <View style={styles.companyHeaderText}>
+            <Text style={[styles.companyHeaderName, { color: company.color }]}>
+              {company.name}
+            </Text>
+            <Text style={styles.companyHeaderService}>{service.name}</Text>
           </View>
-          <View style={styles.dividerDot} />
-          <Text style={styles.serviceText}>{service.name}</Text>
         </View>
+        <View style={[styles.companyHeaderBar, { backgroundColor: company.color }]} />
       </View>
 
       {/* Timer section */}
@@ -605,40 +594,48 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
     zIndex: 10,
   },
-  header: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+  companyHeader: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderRightWidth: 4,
+    overflow: 'hidden',
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 3,
   },
-  summaryRow: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-  },
-  chip: {
+  companyHeaderMain: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.full,
+    paddingVertical: spacing.md,
   },
-  chipIcon: {
-    fontSize: 16,
-    marginLeft: spacing.xs,
+  companyHeaderIcon: {
+    fontSize: 32,
+    marginLeft: spacing.md,
   },
-  chipText: {
-    ...typography.smallMedium,
+  companyHeaderText: {
+    flex: 1,
+    alignItems: 'flex-end',
   },
-  dividerDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.textLight,
-    marginHorizontal: spacing.sm,
+  companyHeaderName: {
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'right',
   },
-  serviceText: {
+  companyHeaderService: {
     ...typography.small,
     color: colors.textSecondary,
     textAlign: 'right',
+    marginTop: 2,
+  },
+  companyHeaderBar: {
+    height: 3,
+    width: '100%',
   },
   timerSection: {
     alignItems: 'center',

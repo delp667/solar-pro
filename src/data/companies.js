@@ -4,6 +4,7 @@ export const companies = [
     name: 'בזק',
     icon: '📞',
     color: '#E31837',
+    category: 'telecom',
     services: [
       { id: 'internet', name: 'אינטרנט', estimatedWait: 12 },
       { id: 'phone', name: 'טלפון קווי', estimatedWait: 8 },
@@ -17,6 +18,7 @@ export const companies = [
     name: 'HOT',
     icon: '📺',
     color: '#FF6600',
+    category: 'cable',
     services: [
       { id: 'tv', name: 'טלוויזיה', estimatedWait: 15 },
       { id: 'internet', name: 'אינטרנט', estimatedWait: 10 },
@@ -30,6 +32,7 @@ export const companies = [
     name: 'פרטנר',
     icon: '📱',
     color: '#0066CC',
+    category: 'telecom',
     services: [
       { id: 'mobile', name: 'סלולר', estimatedWait: 9 },
       { id: 'billing', name: 'חשבוניות ותשלומים', estimatedWait: 7 },
@@ -43,6 +46,7 @@ export const companies = [
     name: 'סלקום',
     icon: '📶',
     color: '#6600CC',
+    category: 'telecom',
     services: [
       { id: 'mobile', name: 'סלולר', estimatedWait: 11 },
       { id: 'billing', name: 'חשבוניות ותשלומים', estimatedWait: 8 },
@@ -56,6 +60,7 @@ export const companies = [
     name: 'יס',
     icon: '🛰️',
     color: '#003366',
+    category: 'cable',
     services: [
       { id: 'tv', name: 'טלוויזיה', estimatedWait: 14 },
       { id: 'billing', name: 'חשבוניות ותשלומים', estimatedWait: 9 },
@@ -68,6 +73,7 @@ export const companies = [
     name: 'אורנג\'',
     icon: '🟠',
     color: '#FF7700',
+    category: 'telecom',
     services: [
       { id: 'mobile', name: 'סלולר', estimatedWait: 10 },
       { id: 'billing', name: 'חשבוניות ותשלומים', estimatedWait: 8 },
@@ -80,6 +86,7 @@ export const companies = [
     name: 'חברת החשמל',
     icon: '⚡',
     color: '#FFD700',
+    category: 'electric',
     services: [
       { id: 'outage', name: 'תקלת חשמל', estimatedWait: 5 },
       { id: 'billing', name: 'חשבוניות ותשלומים', estimatedWait: 20 },
@@ -92,6 +99,7 @@ export const companies = [
     name: 'בנק לאומי',
     icon: '🏦',
     color: '#004B87',
+    category: 'bank',
     services: [
       { id: 'account', name: 'ניהול חשבון', estimatedWait: 8 },
       { id: 'loans', name: 'הלוואות', estimatedWait: 12 },
