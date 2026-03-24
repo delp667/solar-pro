@@ -91,21 +91,27 @@ const tips = [
 
 export default function WaitingScreen({ route, navigation }) {
   const { company, service } = route.params;
-  const estimatedSeconds = service.estimatedWait * 60;
+
+  // Random wait between 10–25 min, stable for this session
+  const initialEstimateMinRef = useRef(Math.floor(Math.random() * 16) + 10);
+  const estimatedSeconds = initialEstimateMinRef.current * 60;
 
   const [status, setStatus] = useState(STATUS.WAITING);
   const [elapsed, setElapsed] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
   const [displayedPhase, setDisplayedPhase] = useState(QUEUE_PHASES[0]);
+  const [displayedEstimate, setDisplayedEstimate] = useState(initialEstimateMinRef.current);
   const intervalRef = useRef(null);
   const tipIntervalRef = useRef(null);
   const alertFiredRef = useRef(false);
   const prevPhaseIndexRef = useRef(0);
+  const prevEstimateRef = useRef(initialEstimateMinRef.current);
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const queueFadeAnim = useRef(new Animated.Value(1)).current;
   const queueSlideAnim = useRef(new Animated.Value(0)).current;
+  const estimateFadeAnim = useRef(new Animated.Value(1)).current;
   const flashAnim = useRef(new Animated.Value(0)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const alertScaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -139,6 +145,26 @@ export default function WaitingScreen({ route, navigation }) {
           Animated.timing(queueSlideAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
         ]).start();
       });
+    }
+  }, [elapsed]);
+
+  // Dynamic estimate: recalculate every 15 s while active
+  useEffect(() => {
+    const isActive = status === STATUS.WAITING || status === STATUS.ALMOST;
+    if (!isActive || elapsed === 0 || elapsed % 15 !== 0) return;
+
+    const baseDecrease = Math.floor(elapsed / 60);
+    const jitterPool = [-1, 0, 0, 1];
+    const jitter = jitterPool[Math.floor(Math.random() * jitterPool.length)];
+    const next = Math.max(1, initialEstimateMinRef.current - baseDecrease + jitter);
+
+    if (next !== prevEstimateRef.current) {
+      prevEstimateRef.current = next;
+      Animated.sequence([
+        Animated.timing(estimateFadeAnim, { toValue: 0.2, duration: 200, useNativeDriver: true }),
+        Animated.timing(estimateFadeAnim, { toValue: 1,   duration: 350, useNativeDriver: true }),
+      ]).start();
+      setDisplayedEstimate(next);
     }
   }, [elapsed]);
 
@@ -241,12 +267,19 @@ export default function WaitingScreen({ route, navigation }) {
   const handlePause = () => setStatus(STATUS.PAUSED);
   const handleResume = () => setStatus(STATUS.WAITING);
   const handleReset = () => {
+    // Re-randomise estimate for the new session
+    const newEstimate = Math.floor(Math.random() * 16) + 10;
+    initialEstimateMinRef.current = newEstimate;
+    prevEstimateRef.current = newEstimate;
+
     alertFiredRef.current = false;
     prevPhaseIndexRef.current = 0;
     alertOpacityAnim.setValue(0);
     alertScaleAnim.setValue(0.8);
     queueFadeAnim.setValue(1);
     queueSlideAnim.setValue(0);
+    estimateFadeAnim.setValue(1);
+    setDisplayedEstimate(newEstimate);
     setDisplayedPhase(QUEUE_PHASES[0]);
     setStatus(STATUS.WAITING);
     setElapsed(0);
@@ -316,7 +349,7 @@ export default function WaitingScreen({ route, navigation }) {
                 <Text style={[styles.timerValue, { color: status === STATUS.PAUSED ? colors.warning : ringColor }]}>
                   {formatTime(remaining)}
                 </Text>
-                <Text style={styles.timerSub}>מתוך {service.estimatedWait} דק׳</Text>
+                <Text style={styles.timerSub}>מתוך {initialEstimateMinRef.current} דק׳</Text>
               </>
             )}
           </View>
@@ -362,6 +395,18 @@ export default function WaitingScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* Dynamic estimate card */}
+        {status !== STATUS.DONE && (
+          <Animated.View style={[styles.estimateCard, { opacity: estimateFadeAnim }]}>
+            <Text style={styles.estimateLabel}>
+              {'זמן המתנה משוער: '}
+              <Text style={[styles.estimateValue, { color: company.color }]}>
+                {`${displayedEstimate} דקות`}
+              </Text>
+            </Text>
+          </Animated.View>
+        )}
+
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
             <Text style={styles.statValue}>{formatTime(remaining)}</Text>
@@ -369,8 +414,10 @@ export default function WaitingScreen({ route, navigation }) {
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
-            <Text style={styles.statValue}>{service.estimatedWait}</Text>
-            <Text style={styles.statLabel}>דקות משוערות</Text>
+            <Animated.Text style={[styles.statValue, { opacity: estimateFadeAnim }]}>
+              {displayedEstimate}
+            </Animated.Text>
+            <Text style={styles.statLabel}>הערכה נוכחית</Text>
           </View>
         </View>
       </View>
@@ -609,6 +656,28 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: 0.5,
     textAlign: 'right',
+  },
+  estimateCard: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    marginHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  estimateLabel: {
+    ...typography.bodyMedium,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  estimateValue: {
+    fontWeight: '700',
+    fontSize: 17,
   },
   statsRow: {
     flexDirection: 'row-reverse',
