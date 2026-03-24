@@ -13,6 +13,21 @@ import { colors, spacing, radius, typography } from '../theme';
 
 const ALERT_THRESHOLD_SECONDS = 60;
 
+const QUEUE_PHASES = [
+  { from: 0,  message: 'מתחבר למערכת...', icon: '🔄' },
+  { from: 5,  message: 'נכנסת לתור',       icon: '✅' },
+  { from: 15, message: 'יש עומס גבוה כרגע', icon: '⚠️' },
+  { from: 30, message: 'מתקדם בתור...',    icon: '📶' },
+];
+
+function getPhaseIndex(elapsed) {
+  let idx = 0;
+  for (let i = 0; i < QUEUE_PHASES.length; i++) {
+    if (elapsed >= QUEUE_PHASES[i].from) idx = i;
+  }
+  return idx;
+}
+
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -81,12 +96,16 @@ export default function WaitingScreen({ route, navigation }) {
   const [status, setStatus] = useState(STATUS.WAITING);
   const [elapsed, setElapsed] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
+  const [displayedPhase, setDisplayedPhase] = useState(QUEUE_PHASES[0]);
   const intervalRef = useRef(null);
   const tipIntervalRef = useRef(null);
   const alertFiredRef = useRef(false);
+  const prevPhaseIndexRef = useRef(0);
 
   // Animations
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const queueFadeAnim = useRef(new Animated.Value(1)).current;
+  const queueSlideAnim = useRef(new Animated.Value(0)).current;
   const flashAnim = useRef(new Animated.Value(0)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const alertScaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -102,6 +121,26 @@ export default function WaitingScreen({ route, navigation }) {
       ])
     ).start();
   }, []);
+
+  // Queue phase transitions driven by elapsed
+  useEffect(() => {
+    const idx = getPhaseIndex(elapsed);
+    if (idx !== prevPhaseIndexRef.current) {
+      prevPhaseIndexRef.current = idx;
+      // Fade + slide out, swap text, fade + slide in
+      Animated.parallel([
+        Animated.timing(queueFadeAnim, { toValue: 0, duration: 180, useNativeDriver: true }),
+        Animated.timing(queueSlideAnim, { toValue: -8, duration: 180, useNativeDriver: true }),
+      ]).start(() => {
+        setDisplayedPhase(QUEUE_PHASES[idx]);
+        queueSlideAnim.setValue(10);
+        Animated.parallel([
+          Animated.timing(queueFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.timing(queueSlideAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start();
+      });
+    }
+  }, [elapsed]);
 
   // Alert banner pulse loop (runs while ALMOST)
   useEffect(() => {
@@ -203,8 +242,12 @@ export default function WaitingScreen({ route, navigation }) {
   const handleResume = () => setStatus(STATUS.WAITING);
   const handleReset = () => {
     alertFiredRef.current = false;
+    prevPhaseIndexRef.current = 0;
     alertOpacityAnim.setValue(0);
     alertScaleAnim.setValue(0.8);
+    queueFadeAnim.setValue(1);
+    queueSlideAnim.setValue(0);
+    setDisplayedPhase(QUEUE_PHASES[0]);
     setStatus(STATUS.WAITING);
     setElapsed(0);
   };
@@ -279,9 +322,24 @@ export default function WaitingScreen({ route, navigation }) {
           </View>
         </View>
 
-        <Text style={[styles.statusLabel, { color: getStatusColor() }]}>
-          {getStatusLabel()}
-        </Text>
+        {status === STATUS.WAITING ? (
+          <Animated.View
+            style={[
+              styles.queuePhaseRow,
+              {
+                opacity: queueFadeAnim,
+                transform: [{ translateY: queueSlideAnim }],
+              },
+            ]}
+          >
+            <Text style={styles.queuePhaseIcon}>{displayedPhase.icon}</Text>
+            <Text style={styles.queuePhaseText}>{displayedPhase.message}</Text>
+          </Animated.View>
+        ) : (
+          <Text style={[styles.statusLabel, { color: getStatusColor() }]}>
+            {getStatusLabel()}
+          </Text>
+        )}
 
         {/* Live elapsed time */}
         {status !== STATUS.DONE && (
@@ -499,6 +557,21 @@ const styles = StyleSheet.create({
   },
   doneEmoji: {
     fontSize: 52,
+  },
+  queuePhaseRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+    gap: spacing.sm,
+  },
+  queuePhaseIcon: {
+    fontSize: 18,
+  },
+  queuePhaseText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'right',
   },
   statusLabel: {
     ...typography.bodyMedium,
